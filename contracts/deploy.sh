@@ -23,6 +23,22 @@ for i in "$@"; do
   esac
 done
 
+# Load env variables if .env exists
+if [ -f .env ]; then
+  export $(grep -v '^#' .env | xargs)
+fi
+
+PROTOCOL_WALLET="${TALOS_PROTOCOL_WALLET:-}"
+if [[ -z "$PROTOCOL_WALLET" ]]; then
+  echo "▶  Fetching address for source key '$SOURCE'..."
+  PROTOCOL_WALLET=$(stellar keys address "$SOURCE" 2>/dev/null || echo "")
+  if [[ -z "$PROTOCOL_WALLET" ]]; then
+     echo "✗  Could not retrieve address for '$SOURCE'. Please set TALOS_PROTOCOL_WALLET in .env or configure the source key."
+     exit 1
+  fi
+fi
+echo "Using protocol wallet: $PROTOCOL_WALLET"
+
 echo "▶  Building Soroban contracts (release)..."
 cargo build --target wasm32-unknown-unknown --release 2>&1 | tail -5
 
@@ -42,6 +58,15 @@ REGISTRY_ID=$(stellar contract deploy \
   --source "$SOURCE")
 
 echo "   TalosRegistry:    $REGISTRY_ID"
+
+echo "▶  Initializing TalosRegistry..."
+stellar contract invoke \
+  --id "$REGISTRY_ID" \
+  --network "$NETWORK" \
+  --source "$SOURCE" \
+  -- \
+  initialize \
+  --protocol_wallet "$PROTOCOL_WALLET"
 
 echo ""
 echo "▶  Deploying TalosNameService to $NETWORK..."

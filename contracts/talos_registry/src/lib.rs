@@ -9,7 +9,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, vec, Address, Env, Map, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, Map, String, Vec,
 };
 
 // ── Data Types ──────────────────────────────────────────────────────
@@ -64,6 +64,13 @@ pub enum DataKey {
     CreatorOf(u32),
     ProtocolWallet,
     ProtocolFeeBps,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ContractError {
+    AlreadyInitialized = 1,
 }
 
 // ── Events ──────────────────────────────────────────────────────────
@@ -266,6 +273,9 @@ impl TalosRegistry {
 
     /// Initialize the contract with protocol wallet and fee.
     pub fn initialize(e: Env, protocol_wallet: Address) {
+        if e.storage().persistent().has(&DataKey::ProtocolWallet) {
+            e.panic_with_error(ContractError::AlreadyInitialized);
+        }
         e.storage()
             .persistent()
             .set(&DataKey::ProtocolWallet, &protocol_wallet);
@@ -287,5 +297,39 @@ impl TalosRegistry {
     /// Get the protocol fee in basis points.
     pub fn protocol_fee_bps(e: Env) -> Option<u32> {
         e.storage().persistent().get(&DataKey::ProtocolFeeBps)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{Env, Address};
+
+    #[test]
+    fn test_initialize_happy_path() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, TalosRegistry);
+        let client = TalosRegistryClient::new(&env, &contract_id);
+
+        let protocol_wallet = Address::generate(&env);
+        client.initialize(&protocol_wallet);
+
+        assert_eq!(client.protocol_wallet(), Some(protocol_wallet));
+        assert_eq!(client.protocol_fee_bps(), Some(300));
+        assert_eq!(client.next_talos_id(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "HostError: Error(Contract, #1)")]
+    fn test_initialize_already_initialized() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, TalosRegistry);
+        let client = TalosRegistryClient::new(&env, &contract_id);
+
+        let protocol_wallet = Address::generate(&env);
+        client.initialize(&protocol_wallet);
+
+        // Second initialize must panic
+        client.initialize(&protocol_wallet);
     }
 }
